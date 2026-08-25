@@ -113,15 +113,7 @@ $$\sum_{t=\tau_{\mathrm{arr}, i}}^{\tau_{\mathrm{dep}, i}} \eta_{\mathrm{charge}
 
 ---
 
-## 4. Counterfactual Benchmark Results
-
-Empirical performance comparison evaluated across a 60-EV fleet simulation over a 48-hour period (192 time steps at 15-minute resolution) against synthetic EPEX SPOT price variations:
-
-| Strategy | Total Cost (€) | Cost Savings (%) | Peak Feeder Load (kW) | Peak Shaving (%) | Comfort Score (%) | Unmet Energy (kWh) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Unmanaged (Immediate)** | €58.75 | 0.00% | 44.00 kW | 0.00% | 14.00% | 2,281.33 kWh |
-| **Time-of-Use (TOU Tariff)** | €57.63 | 1.91% | 44.00 kW | 0.00% | 14.00% | 2,281.33 kWh |
-| **Smart Flexibility (MPC)** | **€52.50** | **10.64%** | **24.96 kW** | **43.27%** | **13.00%** | **2,307.87 kWh** |
+## 4. Counterfactual Benchmark Results (Still working on this part!)
 
 ---
 
