@@ -90,23 +90,26 @@ Where:
 
 #### Operational Constraints
 
-1. **Feeder Transformer Capacity Limit**:
-   $$\sum_{i=1}^{N} P_{i,t} \le P_{\mathrm{feeder, max}} \cdot \eta_{\mathrm{safety}}, \quad \forall t \in \{1, \dots, T\}$$
-   *(where $P_{\mathrm{feeder, max}} = 150.0\text{ kW}$ and safety margin $\eta_{\mathrm{safety}} = 0.90$, imposing an effective transformer ceiling of $135.0\text{ kW}$)*.
+#### 1. Feeder Transformer Capacity Limit
+$$\sum_{i=1}^{N} P_{i,t} \le P_{\mathrm{feeder, max}} \cdot \eta_{\mathrm{safety}}, \quad \forall t \in \{1, \dots, T\}$$
 
-2. **Peak Feeder Load Tracking**:
-   $$\sum_{i=1}^{N} P_{i,t} \le P_{\mathrm{peak}}, \quad \forall t \in \{1, \dots, T\}$$
+*(where $P_{\mathrm{feeder, max}} = 150.0\text{ kW}$ and safety margin $\eta_{\mathrm{safety}} = 0.90$, imposing an effective transformer ceiling of $135.0\text{ kW}$)*.
 
-3. **Charger Hardware & Plugin Window Limits**:
-   $$0 \le P_{i,t} \le P_{\max, i}, \quad \forall t \in [\tau_{\mathrm{arr}, i}, \tau_{\mathrm{dep}, i}]$$
-   $$P_{i,t} = 0, \quad \forall t \notin [\tau_{\mathrm{arr}, i}, \tau_{\mathrm{dep}, i}]$$
+#### 2. Peak Feeder Load Tracking
+$$\sum_{i=1}^{N} P_{i,t} \le P_{\mathrm{peak}}, \quad \forall t \in \{1, \dots, T\}$$
 
-4. **Battery State-of-Charge (SoC) Dynamics**:
-   $$\mathrm{SoC}_{i, t+1} = \mathrm{SoC}_{i, t} + \frac{\eta_{\mathrm{charge}} \cdot P_{i,t} \cdot \Delta t}{E_{\mathrm{cap}, i}}$$
-   *(where $\eta_{\mathrm{charge}} = 0.95$ represents AC-to-DC conversion efficiency)*.
+#### 3. Charger Hardware & Plugin Window Limits
+$$0 \le P_{i,t} \le P_{\max, i}, \quad \forall t \in [\tau_{\mathrm{arr}, i}, \tau_{\mathrm{dep}, i}]$$
 
-5. **Driver Departure Energy Target Satisfaction**:
-   $$\sum_{t=\tau_{\mathrm{arr}, i}}^{\tau_{\mathrm{dep}, i}} \eta_{\mathrm{charge}} \cdot P_{i,t} \cdot \Delta t + s_i \ge E_{\mathrm{req}, i}, \quad s_i \ge 0, \quad \forall i \in \{1, \dots, N\}$$
+$$P_{i,t} = 0, \quad \forall t \notin [\tau_{\mathrm{arr}, i}, \tau_{\mathrm{dep}, i}]$$
+
+#### 4. Battery State-of-Charge (SoC) Dynamics
+$$\mathrm{SoC}_{i, t+1} = \mathrm{SoC}_{i, t} + \frac{\eta_{\mathrm{charge}} \cdot P_{i,t} \cdot \Delta t}{E_{\mathrm{cap}, i}}$$
+
+*(where $\eta_{\mathrm{charge}} = 0.95$ represents AC-to-DC conversion efficiency)*.
+
+#### 5. Driver Departure Energy Target Satisfaction
+$$\sum_{t=\tau_{\mathrm{arr}, i}}^{\tau_{\mathrm{dep}, i}} \eta_{\mathrm{charge}} \cdot P_{i,t} \cdot \Delta t + s_i \ge E_{\mathrm{req}, i}, \quad s_i \ge 0, \quad \forall i \in \{1, \dots, N\}$$
 
 ---
 
