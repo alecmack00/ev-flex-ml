@@ -57,21 +57,21 @@ flowchart TD
 #### Mixture Density Network (MDN) Joint Conditional Density
 The Mixture Density Network models the joint conditional probability distribution $P(Y \mid X)$ of session plug duration and required energy target $Y = [T_{\text{duration}}, E_{\text{req}}]^\top$ given feature vector $X$ using a Mixture of $K$ Gaussians:
 
-$$P(Y \mid X) = \sum_{k=1}^{K} \pi_k(X) \, \mathcal{N}\left(Y \mid \mu_k(X), \, \Sigma_k(X)\right)$$
+$$P(Y \mid X) = \sum_{k=1}^{K} \pi_k(X) \mathcal{N}\left(Y \mid \mu_k(X), \Sigma_k(X)\right)$$
 
 where $\sum_{k=1}^K \pi_k(X) = 1$ is enforced via a Softmax activation, and diagonal covariance entries $\sigma_k(X) > 0$ are enforced via Softplus activations.
 
 #### Negative Log-Likelihood (NLL) Loss Formulation
 Network parameters $\theta$ are optimized by minimizing the Negative Log-Likelihood over batch size $B$ using the numerically stable `logsumexp` formulation:
 
-$$\mathcal{L}_{\text{NLL}}(\theta) = -\frac{1}{B} \sum_{i=1}^{B} \log \left[ \sum_{k=1}^{K} \exp \left( \log \pi_k(X_i) + \sum_{d=1}^{D} \log \mathcal{N}\left(y_{i,d} \mid \mu_{k,d}(X_i), \, \sigma_{k,d}(X_i)^2\right) \right) \right]$$
+$$\mathcal{L}_{\text{NLL}}(\theta) = -\frac{1}{B} \sum_{i=1}^{B} \log \left[ \sum_{k=1}^{K} \exp \left( \log \pi_k(X_i) + \sum_{d=1}^{D} \log \mathcal{N}\left(y_{i,d} \mid \mu_{k,d}(X_i), \sigma_{k,d}(X_i)^2\right) \right) \right]$$
 
 #### Quantile Temporal Convolutional Network (Quantile TCN)
 Quantile TCNs estimate temporal aggregate fleet load quantiles $\tau \in \{0.1, 0.5, 0.9\}$ across future time horizons using 1D dilated causal convolutions. The Multi-Quantile Pinball Loss is defined as:
 
-$$\mathcal{L}_{\text{pinball}}(y, \hat{y}_\tau) = \max \left( \tau (y - \hat{y}_\tau), \, (\tau - 1)(y - \hat{y}_\tau) \right)$$
+$$\mathcal{L}_{\text{pinball}}(y, \hat{y}_\tau) = \max \left( \tau (y - \hat{y}_\tau), (\tau - 1)(y - \hat{y}_\tau) \right)$$
 
-$$\mathcal{L}_{\text{TCN}}(\theta) = \frac{1}{|\mathcal{T}|} \sum_{\tau \in \{0.1, 0.5, 0.9\}} \frac{1}{B \cdot T} \sum_{i=1}^B \sum_{t=1}^T \mathcal{L}_{\text{pinball}}\left(y_{i,t}, \, \hat{y}_{i,t}^{(\tau)}\right)$$
+$$\mathcal{L}_{\text{TCN}}(\theta) = \frac{1}{|\mathcal{T}|} \sum_{\tau \in \{0.1, 0.5, 0.9\}} \frac{1}{B \cdot T} \sum_{i=1}^B \sum_{t=1}^T \mathcal{L}_{\text{pinball}}\left(y_{i,t}, \hat{y}_{i,t}^{(\tau)}\right)$$
 
 ---
 
@@ -80,7 +80,7 @@ $$\mathcal{L}_{\text{TCN}}(\theta) = \frac{1}{|\mathcal{T}|} \sum_{\tau \in \{0.
 For $N$ connected EV charging sessions across planning horizon $t \in \{1, \dots, T\}$ with time step duration $\Delta t = 0.25$ hours (15-minute resolution):
 
 #### Multi-Objective Function
-$$\min_{\{P_{i,t}\}, \{s_i\}, P_{\text{peak}}} \; \sum_{t=1}^{T} \lambda_t \left( \sum_{i=1}^{N} P_{i,t} \right) \Delta t + \gamma \sum_{i=1}^{N} s_i + \alpha P_{\text{peak}}$$
+$$\min_{\{P_{i,t}\}, \{s_i\}, P_{\text{peak}}} \sum_{t=1}^{T} \lambda_t \left( \sum_{i=1}^{N} P_{i,t} \right) \Delta t + \gamma \sum_{i=1}^{N} s_i + \alpha P_{\text{peak}}$$
 
 Where:
 - $\lambda_t$: EPEX SPOT day-ahead electricity spot price (€/kWh) at time step $t$.
@@ -98,15 +98,15 @@ Where:
    $$\sum_{i=1}^{N} P_{i,t} \le P_{\text{peak}}, \quad \forall t \in \{1, \dots, T\}$$
 
 3. **Charger Hardware & Plugin Window Limits**:
-   $$0 \le P_{i,t} \le P_{\max, i}, \quad \forall t \in [\tau_{\text{arr}, i}, \, \tau_{\text{dep}, i}]$$
-   $$P_{i,t} = 0, \quad \forall t \notin [\tau_{\text{arr}, i}, \, \tau_{\text{dep}, i}]$$
+   $$0 \le P_{i,t} \le P_{\max, i}, \quad \forall t \in [\tau_{\text{arr}, i}, \tau_{\text{dep}, i}]$$
+   $$P_{i,t} = 0, \quad \forall t \notin [\tau_{\text{arr}, i}, \tau_{\text{dep}, i}]$$
 
 4. **Battery State-of-Charge (SoC) Dynamics**:
-   $$\text{SoC}_{i, t+1} = \text{SoC}_{i, t} + \frac{\eta_{\text{charge}} \, P_{i,t} \, \Delta t}{E_{\text{cap}, i}}$$
+   $$\mathrm{SoC} _{i, t+1} = \mathrm{SoC} _{i, t} + \frac{\eta_{\text{charge}} \cdot P_{i,t} \cdot \Delta t}{E_{\text{cap}, i}}$$
    *(where $\eta_{\text{charge}} = 0.95$ represents AC-to-DC conversion efficiency)*.
 
 5. **Driver Departure Energy Target Satisfaction**:
-   $$\sum_{t=\tau_{\text{arr}, i}}^{\tau_{\text{dep}, i}} \eta_{\text{charge}} \, P_{i,t} \, \Delta t + s_i \ge E_{\text{req}, i}, \quad s_i \ge 0, \; \forall i \in \{1, \dots, N\}$$
+   $$\sum_{t=\tau_{\text{arr}, i}}^{\tau_{\text{dep}, i}} \eta_{\text{charge}} \cdot P_{i,t} \cdot \Delta t + s_i \ge E_{\text{req}, i}, \quad s_i \ge 0, \quad \forall i \in \{1, \dots, N\}$$
 
 ---
 
