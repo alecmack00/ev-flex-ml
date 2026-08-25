@@ -57,19 +57,19 @@ flowchart TD
 #### Mixture Density Network (MDN) Joint Conditional Density
 The Mixture Density Network models the joint conditional probability distribution $P(Y \mid X)$ of session plug duration and required energy target $Y = [T_{\text{duration}}, E_{\text{req}}]^\top$ given feature vector $X$ using a Mixture of $K$ Gaussians:
 
-$$P(Y \mid X) = \sum_{k=1}^{K} \pi_k(X) \, \mathcal{N}\left(Y \;\Big|\; \mu_k(X), \, \Sigma_k(X)\right)$$
+$$P(Y \mid X) = \sum_{k=1}^{K} \pi_k(X) \, \mathcal{N}\left(Y \mid \mu_k(X), \, \Sigma_k(X)\right)$$
 
 where $\sum_{k=1}^K \pi_k(X) = 1$ is enforced via a Softmax activation, and diagonal covariance entries $\sigma_k(X) > 0$ are enforced via Softplus activations.
 
 #### Negative Log-Likelihood (NLL) Loss Formulation
 Network parameters $\theta$ are optimized by minimizing the Negative Log-Likelihood over batch size $B$ using the numerically stable `logsumexp` formulation:
 
-$$\mathcal{L}_{\text{NLL}}(\theta) = -\frac{1}{B} \sum_{i=1}^{B} \log \left[ \sum_{k=1}^{K} \exp \left( \log \pi_k(X_i) + \sum_{d=1}^{D} \log \mathcal{N}\left(y_{i,d} \;\Big|\; \mu_{k,d}(X_i), \, \sigma_{k,d}(X_i)^2\right) \right) \right]$$
+$$\mathcal{L}_{\text{NLL}}(\theta) = -\frac{1}{B} \sum_{i=1}^{B} \log \left[ \sum_{k=1}^{K} \exp \left( \log \pi_k(X_i) + \sum_{d=1}^{D} \log \mathcal{N}\left(y_{i,d} \mid \mu_{k,d}(X_i), \, \sigma_{k,d}(X_i)^2\right) \right) \right]$$
 
 #### Quantile Temporal Convolutional Network (Quantile TCN)
 Quantile TCNs estimate temporal aggregate fleet load quantiles $\tau \in \{0.1, 0.5, 0.9\}$ across future time horizons using 1D dilated causal convolutions. The Multi-Quantile Pinball Loss is defined as:
 
-$$\mathcal{L}_{\text{pinball}}(y, \hat{y}_\tau) = \max \Big\{ \tau (y - \hat{y}_\tau), \, (\tau - 1)(y - \hat{y}_\tau) \Big\}$$
+$$\mathcal{L}_{\text{pinball}}(y, \hat{y}_\tau) = \max \left( \tau (y - \hat{y}_\tau), \, (\tau - 1)(y - \hat{y}_\tau) \right)$$
 
 $$\mathcal{L}_{\text{TCN}}(\theta) = \frac{1}{|\mathcal{T}|} \sum_{\tau \in \{0.1, 0.5, 0.9\}} \frac{1}{B \cdot T} \sum_{i=1}^B \sum_{t=1}^T \mathcal{L}_{\text{pinball}}\left(y_{i,t}, \, \hat{y}_{i,t}^{(\tau)}\right)$$
 
