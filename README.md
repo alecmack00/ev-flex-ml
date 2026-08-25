@@ -55,23 +55,23 @@ flowchart TD
 ### 3.1 Probabilistic Deep Learning
 
 #### Mixture Density Network (MDN) Joint Conditional Density
-The Mixture Density Network models the joint conditional probability distribution $P(Y \mid X)$ of session plug duration and required energy target $Y = [T\_{\text{duration}}, E\_{\text{req}}]^\top$ given feature vector $X$ using a Mixture of $K$ Gaussians:
+The Mixture Density Network models the joint conditional probability distribution $P(Y \mid X)$ of session plug duration and required energy target $Y = [T_{\mathrm{duration}}, E_{\mathrm{req}}]^\top$ given feature vector $X$ using a Mixture of $K$ Gaussians:
 
-$$P(Y \mid X) = \sum_{k=1}^{K} \pi\_k(X) \mathcal{N}\left(Y \mid \mu\_k(X), \Sigma\_k(X)\right)$$
+$$P(Y \mid X) = \sum_{k=1}^{K} \pi_k(X) \mathcal{N}\left(Y \mid \mu_k(X), \Sigma_k(X)\right)$$
 
-where $\sum_{k=1}^K \pi\_k(X) = 1$ is enforced via a Softmax activation, and diagonal covariance entries $\sigma\_k(X) > 0$ are enforced via Softplus activations.
+where $\sum_{k=1}^K \pi_k(X) = 1$ is enforced via a Softmax activation, and diagonal covariance entries $\sigma_k(X) > 0$ are enforced via Softplus activations.
 
 #### Negative Log-Likelihood (NLL) Loss Formulation
 Network parameters $\theta$ are optimized by minimizing the Negative Log-Likelihood over batch size $B$ using the numerically stable `logsumexp` formulation:
 
-$$\mathcal{L}\_{\text{NLL}}(\theta) = -\frac{1}{B} \sum_{i=1}^{B} \log \left[ \sum_{k=1}^{K} \exp \left( \log \pi\_k(X\_i) + \sum_{d=1}^{D} \log \mathcal{N}\left(y\_{i,d} \mid \mu\_{k,d}(X\_i), \sigma\_{k,d}(X\_i)^2\right) \right) \right]$$
+$$\mathcal{L}_{\mathrm{NLL}}(\theta) = -\frac{1}{B} \sum_{i=1}^{B} \log \left[ \sum_{k=1}^{K} \exp \left( \log \pi_k(X_i) + \sum_{d=1}^{D} \log \mathcal{N}\left(y_{i,d} \mid \mu_{k,d}(X_i), \sigma_{k,d}(X_i)^2\right) \right) \right]$$
 
 #### Quantile Temporal Convolutional Network (Quantile TCN)
 Quantile TCNs estimate temporal aggregate fleet load quantiles $\tau \in \{0.1, 0.5, 0.9\}$ across future time horizons using 1D dilated causal convolutions. The Multi-Quantile Pinball Loss is defined as:
 
-$$\mathcal{L}\_{\text{pinball}}(y, \hat{y}\_\tau) = \max \left( \tau (y - \hat{y}\_\tau), (\tau - 1)(y - \hat{y}\_\tau) \right)$$
+$$\mathcal{L}_{\mathrm{pinball}}(y, \hat{y}_\tau) = \max \left( \tau (y - \hat{y}_\tau), (\tau - 1)(y - \hat{y}_\tau) \right)$$
 
-$$\mathcal{L}\_{\text{TCN}}(\theta) = \frac{1}{|\mathcal{T}|} \sum_{\tau \in \{0.1, 0.5, 0.9\}} \frac{1}{B \cdot T} \sum_{i=1}^B \sum_{t=1}^T \mathcal{L}\_{\text{pinball}}\left(y\_{i,t}, \hat{y}\_{i,t}^{(\tau)}\right)$$
+$$\mathcal{L}_{\mathrm{TCN}}(\theta) = \frac{1}{|\mathcal{T}|} \sum_{\tau \in \{0.1, 0.5, 0.9\}} \frac{1}{B \cdot T} \sum_{i=1}^B \sum_{t=1}^T \mathcal{L}_{\mathrm{pinball}}\left(y_{i,t}, \hat{y}_{i,t}^{(\tau)}\right)$$
 
 ---
 
@@ -80,33 +80,33 @@ $$\mathcal{L}\_{\text{TCN}}(\theta) = \frac{1}{|\mathcal{T}|} \sum_{\tau \in \{0
 For $N$ connected EV charging sessions across planning horizon $t \in \{1, \dots, T\}$ with time step duration $\Delta t = 0.25$ hours (15-minute resolution):
 
 #### Multi-Objective Function
-$$\min_{\{P\_{i,t}\}, \{s\_i\}, P\_{\text{peak}}} \sum_{t=1}^{T} \lambda\_t \left( \sum_{i=1}^{N} P\_{i,t} \right) \Delta t + \gamma \sum_{i=1}^{N} s\_i + \alpha P\_{\text{peak}}$$
+$$\min_{\{P_{i,t}\}, \{s_i\}, P_{\mathrm{peak}}} \sum_{t=1}^{T} \lambda_t \left( \sum_{i=1}^{N} P_{i,t} \right) \Delta t + \gamma \sum_{i=1}^{N} s_i + \alpha P_{\mathrm{peak}}$$
 
 Where:
-- $\lambda\_t$: EPEX SPOT day-ahead electricity spot price (€/kWh) at time step $t$.
-- $P\_{i,t} \ge 0$: Active charging power (kW) dispatched to EV $i$ at step $t$.
-- $s\_i \ge 0$: Non-negative slack penalty variable for unmet departure energy (€/kWh penalty factor $\gamma = 10.0$).
-- $P\_{\text{peak}}$: Peak aggregate feeder demand across the planning horizon (€/kW demand charge penalty $\alpha = 2.5$).
+- $\lambda_t$: EPEX SPOT day-ahead electricity spot price (€/kWh) at time step $t$.
+- $P_{i,t} \ge 0$: Active charging power (kW) dispatched to EV $i$ at step $t$.
+- $s_i \ge 0$: Non-negative slack penalty variable for unmet departure energy (€/kWh penalty factor $\gamma = 10.0$).
+- $P_{\mathrm{peak}}$: Peak aggregate feeder demand across the planning horizon (€/kW demand charge penalty $\alpha = 2.5$).
 
 #### Operational Constraints
 
 1. **Feeder Transformer Capacity Limit**:
-   $$\sum_{i=1}^{N} P\_{i,t} \le P\_{\text{feeder, max}} \cdot \eta\_{\text{safety}}, \quad \forall t \in \{1, \dots, T\}$$
-   *(where $P_{\text{feeder, max}} = 150.0\text{ kW}$ and safety margin $\eta_{\text{safety}} = 0.90$, imposing an effective transformer ceiling of $135.0\text{ kW}$)*.
+   $$\sum_{i=1}^{N} P_{i,t} \le P_{\mathrm{feeder, max}} \cdot \eta_{\mathrm{safety}}, \quad \forall t \in \{1, \dots, T\}$$
+   *(where $P_{\mathrm{feeder, max}} = 150.0\text{ kW}$ and safety margin $\eta_{\mathrm{safety}} = 0.90$, imposing an effective transformer ceiling of $135.0\text{ kW}$)*.
 
 2. **Peak Feeder Load Tracking**:
-   $$\sum_{i=1}^{N} P\_{i,t} \le P\_{\text{peak}}, \quad \forall t \in \{1, \dots, T\}$$
+   $$\sum_{i=1}^{N} P_{i,t} \le P_{\mathrm{peak}}, \quad \forall t \in \{1, \dots, T\}$$
 
 3. **Charger Hardware & Plugin Window Limits**:
-   $$0 \le P\_{i,t} \le P\_{\max, i}, \quad \forall t \in [\tau\_{\text{arr}, i}, \tau\_{\text{dep}, i}]$$
-   $$P\_{i,t} = 0, \quad \forall t \notin [\tau\_{\text{arr}, i}, \tau\_{\text{dep}, i}]$$
+   $$0 \le P_{i,t} \le P_{\max, i}, \quad \forall t \in [\tau_{\mathrm{arr}, i}, \tau_{\mathrm{dep}, i}]$$
+   $$P_{i,t} = 0, \quad \forall t \notin [\tau_{\mathrm{arr}, i}, \tau_{\mathrm{dep}, i}]$$
 
 4. **Battery State-of-Charge (SoC) Dynamics**:
-   $$\mathrm{SoC}\_{i, t+1} = \mathrm{SoC}\_{i, t} + \frac{\eta\_{\text{charge}} \cdot P\_{i,t} \cdot \Delta t}{E\_{\text{cap}, i}}$$
-   *(where $\eta_{\text{charge}} = 0.95$ represents AC-to-DC conversion efficiency)*.
+   $$\mathrm{SoC}_{i, t+1} = \mathrm{SoC}_{i, t} + \frac{\eta_{\mathrm{charge}} \cdot P_{i,t} \cdot \Delta t}{E_{\mathrm{cap}, i}}$$
+   *(where $\eta_{\mathrm{charge}} = 0.95$ represents AC-to-DC conversion efficiency)*.
 
 5. **Driver Departure Energy Target Satisfaction**:
-   $$\sum_{t=\tau\_{\text{arr}, i}}^{\tau\_{\text{dep}, i}} \eta\_{\text{charge}} \cdot P\_{i,t} \cdot \Delta t + s\_i \ge E\_{\text{req}, i}, \quad s\_i \ge 0, \quad \forall i \in \{1, \dots, N\}$$
+   $$\sum_{t=\tau_{\mathrm{arr}, i}}^{\tau_{\mathrm{dep}, i}} \eta_{\mathrm{charge}} \cdot P_{i,t} \cdot \Delta t + s_i \ge E_{\mathrm{req}, i}, \quad s_i \ge 0, \quad \forall i \in \{1, \dots, N\}$$
 
 ---
 
