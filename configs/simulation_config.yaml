@@ -1,0 +1,66 @@
+# Simulation Configuration for Feeder Constraints, Charging Infrastructure & Dynamic Pricing
+
+# Section 1: Data Pipeline & Data Source Options
+# Controls primary data fetching and synthetic fallback mechanisms.
+data_source:
+  mode: "synthetic"            # Primary pipeline mode: "synthetic" or "real"
+  fallback_to_synthetic: true  # Auto-fallback to SyntheticDataGenerator if real APIs or files fail
+  real_data:
+    entsoe_api_enabled: false  # ENTSO-E Transparency API (Requires ENTSOE_TOKEN env var for BZN|NL Day-Ahead prices)
+    prices_csv_path: "data/raw/epex_spot_nl_2024.csv"  # Local CSV fallback for EPEX SPOT prices (e.g. from OPSD / Energy-Charts)
+    sessions_csv_path: "data/raw/elaadnl_sessions_2024.csv" # Local CSV fallback for EV charging logs (e.g. from ElaadNL / Caltech ACN)
+
+# Section 2: Distribution Feeder Grid Constraints (feeder)
+# Low-voltage substation transformer operational limits in the Netherlands (e.g., Amsterdam grid node).
+feeder:
+  feeder_id: "NL-AMS-FEEDER-04" # Substation feeder node identifier
+  max_capacity_kw: 150.0       # Hard active power thermal limit of distribution transformer (150 kW)
+  transformer_kva: 175.0       # Nominal apparent power rating (175 kVA; S = P / cos(phi) = 150 / 0.95 = 157.9 kVA)
+  voltage_v: 400.0             # European 3-phase line-to-line AC voltage (400V phase-to-phase, 230V phase-to-neutral)
+  power_factor: 0.95           # Power factor cos(phi) ratio of real to apparent power
+  safety_margin: 0.90          # Operational derating multiplier (90% threshold -> effective ceiling P_max = 135 kW)
+  baseload_kw: 20.0            # Background building/depot non-EV baseload demand (20 kW)
+
+# Section 3: Charging Station Hardware (station)
+# Depot / public charging infrastructure specifications.
+station:
+  num_chargers: 20             # Total connected charging stalls (20 stalls x 11 kW = 220 kW max potential load > 150 kW feeder cap)
+  num_default_chargers: 16     # Standard AC Level 2 charging stalls (11 kW)
+  num_fast_chargers: 4         # High-capacity AC charging stalls (22 kW)
+  default_charger_kw: 11.0     # Standard 3-phase AC Level 2 charger max rate (3-phase x 230V x 16A ≈ 11.04 kW)
+  fast_charger_kw: 22.0        # High-capacity 3-phase AC charger max rate (3-phase x 230V x 32A ≈ 22.08 kW)
+  charging_efficiency: 0.95    # AC-to-DC conversion efficiency (eta = 95% accounting for 5% inverter/thermal losses)
+
+# Section 4: Vehicle Fleet Battery Specifications (fleet)
+# Battery storage bounds and default State-of-Charge targets for connected EV sessions.
+fleet:
+  min_battery_kwh: 40.0        # Small commercial EV / compact battery capacity (kWh)
+  max_battery_kwh: 85.0        # Large commercial EV / sedan battery capacity (kWh)
+  default_battery_kwh: 60.0    # Average fleet EV battery capacity (kWh)
+  default_target_soc: 0.90     # Default departure State of Charge target (90% SoC)
+  min_arrival_soc: 0.10        # Minimum expected State of Charge at plug-in arrival (10% SoC)
+
+# Section 5: Time Resolution & Simulation Horizon (time)
+# Planning window parameters for rolling-horizon MPC and backtesting.
+time:
+  step_minutes: 15             # Settlement time resolution dt = 15 min (0.25 hours), matching Dutch/European imbalance market periods
+  horizon_hours: 24            # Rolling-horizon MPC lookahead planning window (24 hours x 4 steps/hour = 96 time steps)
+  simulation_days: 7           # Total backtest evaluation duration (7 days)
+
+# Section 6: Electricity Tariffs & Markets (pricing)
+# Spot market structure and Time-of-Use benchmark rates for BZN|NL.
+pricing:
+  market: "EPEX_SPOT_NL"       # EPEX SPOT Netherlands Day-Ahead wholesale power market
+  currency: "EUR"              # Settlement currency
+  default_off_peak_eur_kwh: 0.12 # Static Time-of-Use off-peak electricity rate (€0.12/kWh)
+  default_peak_eur_kwh: 0.35     # Static Time-of-Use peak electricity rate (€0.35/kWh)
+  tou_peak_hours: [8, 9, 10, 17, 18, 19, 20] # Designated peak pricing hours (08:00-10:59 and 17:00-20:59)
+  feed_in_tariff_eur_kwh: 0.05 # Compensation tariff (€0.05/kWh) for V2G or local solar export
+
+# Section 7: Optimization & Solver Settings (optimization)
+# Convex optimization solver backend and penalty weight factors.
+optimization:
+  solver: "CVXPY"              # Modeling framework choice: "CVXPY" or "PuLP"
+  preferred_backend: "ECOS"    # Mathematical solver backend ("ECOS", "OSQP", or "CBC")
+  penalty_unmet_energy: 10.0   # Heavy slack variable penalty gamma (€10.0/kWh) prioritizing driver departure energy satisfaction
+  peak_demand_charge_eur_kw: 2.5 # Monthly peak demand tariff penalty alpha (€2.50/kW) simulating Dutch DSO grid capacity charges
