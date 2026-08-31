@@ -185,13 +185,15 @@ def schedule_milp(request: DispatchRequest) -> DispatchResponse:
         )
 
     feeder_cap = request.feeder_config.max_capacity_kw if request.feeder_config else 150.0
+    baseline_load = request.feeder_config.baseline_load_kw if request.feeder_config else None
+    ambient_temp = request.feeder_config.ambient_temp_c if request.feeder_config else None
 
     scheduler = MILPScheduler(
         feeder_capacity_kw=feeder_cap,
         dt_hours=request.dt_hours,
+        battery_degradation_cost_eur_kwh=request.battery_degradation_cost_eur_kwh,
     )
 
-    # Convert Pydantic session inputs to dictionary format with step indices
     start_dt = pd.to_datetime(request.sessions[0].arrival_time)
     formatted_sessions = []
 
@@ -215,6 +217,8 @@ def schedule_milp(request: DispatchRequest) -> DispatchResponse:
         sessions=formatted_sessions,
         price_signal=request.price_signals,
         horizon_steps=request.horizon_steps,
+        baseline_load=baseline_load,
+        ambient_temp_c=ambient_temp,
     )
 
     power_mat = sol["power_matrix"]
@@ -235,7 +239,7 @@ def schedule_milp(request: DispatchRequest) -> DispatchResponse:
         total_cost_eur=sol["total_cost_eur"],
         peak_load_kw=sol["peak_load_kw"],
         total_unmet_kwh=sol["total_unmet_kwh"],
-        feeder_capacity_kw=feeder_cap,
+        feeder_capacity_kw=sol.get("feeder_capacity_kw", feeder_cap),
         schedule=schedule_items,
     )
 
@@ -250,11 +254,15 @@ def schedule_mpc(request: DispatchRequest) -> DispatchResponse:
         )
 
     feeder_cap = request.feeder_config.max_capacity_kw if request.feeder_config else 150.0
+    baseline_load = request.feeder_config.baseline_load_kw if request.feeder_config else None
+    ambient_temp = request.feeder_config.ambient_temp_c if request.feeder_config else None
 
     mpc = MPCController(
         feeder_capacity_kw=feeder_cap,
         horizon_steps=request.horizon_steps,
         dt_hours=request.dt_hours,
+        battery_degradation_cost_eur_kwh=request.battery_degradation_cost_eur_kwh,
+        ambient_temp_c=ambient_temp,
     )
 
     start_dt = pd.to_datetime(request.sessions[0].arrival_time)
@@ -282,6 +290,8 @@ def schedule_mpc(request: DispatchRequest) -> DispatchResponse:
         sessions=formatted_sessions,
         full_price_signal=request.price_signals,
         total_steps=len(request.price_signals),
+        baseline_load=baseline_load,
+        ambient_temp_c=ambient_temp,
     )
 
     power_mat = res["dispatch_matrix"]

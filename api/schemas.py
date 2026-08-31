@@ -31,6 +31,14 @@ class FeederConfig(BaseModel):
     feeder_id: str = Field("NL-AMS-FEEDER-04", description="Feeder ID")
     max_capacity_kw: float = Field(150.0, gt=0, description="Feeder transformer capacity limit in kW")
     safety_margin: float = Field(0.90, gt=0.0, le=1.0, description="Operational safety headroom factor")
+    baseline_load_kw: Optional[List[float]] = Field(
+        default=None,
+        description="Optional exogenous non-EV background demand vector (kW) consuming feeder headroom",
+    )
+    ambient_temp_c: Optional[float] = Field(
+        default=None,
+        description="Optional ambient temperature in °C for dynamic transformer thermal derating (IEEE C57.91)",
+    )
 
 
 class PriceSignalStep(BaseModel):
@@ -66,6 +74,11 @@ class DispatchRequest(BaseModel):
     feeder_config: Optional[FeederConfig] = Field(default_factory=FeederConfig)
     dt_hours: float = Field(0.25, gt=0, description="Time step duration in hours")
     horizon_steps: int = Field(96, gt=0, description="Planning horizon length in time steps")
+    battery_degradation_cost_eur_kwh: float = Field(
+        0.0,
+        ge=0.0,
+        description="Battery cycling degradation cost penalty in EUR/kWh throughput",
+    )
 
 
 class DispatchScheduleItem(BaseModel):
