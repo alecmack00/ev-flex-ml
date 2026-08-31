@@ -196,7 +196,7 @@ class QuantileTCN(nn.Module):
         self.quantile_head = nn.Conv1d(num_channels[-1], self.num_quantiles, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass with guaranteed quantile ordering to prevent quantile crossing.
+        """Forward pass with guaranteed non-crossing monotonic quantile head activations.
 
         Args:
             x: Input tensor of shape [batch_size, input_dim, sequence_length].
@@ -205,7 +205,12 @@ class QuantileTCN(nn.Module):
             torch.Tensor: Quantile forecasts of shape [batch_size, num_quantiles, sequence_length].
         """
         tcn_out = self.tcn(x)
-        quantile_preds = self.quantile_head(tcn_out)
-        # Sort along quantile dimension to prevent quantile crossing (q_0.1 <= q_0.5 <= q_0.9)
-        sorted_quantiles = torch.sort(quantile_preds, dim=1)[0]
-        return sorted_quantiles
+        raw_head = self.quantile_head(tcn_out)  # [batch_size, num_quantiles, sequence_length]
+        
+        if self.num_quantiles > 1:
+            q_base = raw_head[:, 0:1, :]
+            q_deltas = F.softplus(raw_head[:, 1:, :])
+            q_ordered = torch.cat([q_base, q_base + torch.cumsum(q_deltas, dim=1)], dim=1)
+            return q_ordered
+            
+        return raw_head

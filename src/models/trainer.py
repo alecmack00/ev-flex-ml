@@ -103,9 +103,8 @@ class ModelTrainer:
                 # Model forward pass handling different output formats
                 out = self.model(x_b)
                 if isinstance(out, tuple):
-                    # MDN tuple output (pi, mu, sigma)
-                    pi, mu, sigma = out
-                    loss = self.loss_fn(pi, mu, sigma, y_b)
+                    # Tuple output e.g. (pi, mu, sigma) or (pi, mu, sigma, rho)
+                    loss = self.loss_fn(*out, y_b)
                 else:
                     loss = self.loss_fn(out, y_b)
 
@@ -133,8 +132,7 @@ class ModelTrainer:
                         out = self.model(x_b)
 
                         if isinstance(out, tuple):
-                            pi, mu, sigma = out
-                            v_loss = self.loss_fn(pi, mu, sigma, y_b)
+                            v_loss = self.loss_fn(*out, y_b)
                         else:
                             v_loss = self.loss_fn(out, y_b)
 

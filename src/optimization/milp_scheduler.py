@@ -168,19 +168,24 @@ class MILPScheduler:
             constraints.append(delivered_energy + slack[i] >= req_energy)
 
         # Objective Function
-        # Energy cost + Degradation cost + Slack penalty + Peak demand charge
-        effective_unit_cost = prices + self.battery_degradation_cost_eur_kwh
-        energy_cost = cp.sum(cp.matmul(P, effective_unit_cost) * self.dt_hours)
+        # Energy cost + Battery degradation (linear throughput + quadratic C-rate penalty) + Slack penalty + Peak demand charge
+        energy_cost = cp.sum(cp.matmul(P, prices) * self.dt_hours)
+        if self.battery_degradation_cost_eur_kwh > 0.0:
+            deg_cost = self.battery_degradation_cost_eur_kwh * cp.sum(P) * self.dt_hours + \
+                       0.001 * self.battery_degradation_cost_eur_kwh * cp.sum(cp.square(P)) * self.dt_hours
+        else:
+            deg_cost = 0.0
+            
         total_slack_cost = self.slack_penalty * cp.sum(slack)
         peak_cost = self.peak_penalty * peak
 
-        objective = cp.Minimize(energy_cost + total_slack_cost + peak_cost)
+        objective = cp.Minimize(energy_cost + deg_cost + total_slack_cost + peak_cost)
         problem = cp.Problem(objective, constraints)
 
-        # Dynamic solver selection prioritizing modern solvers (CLARABEL -> ECOS -> HIGHS -> OSQP)
+        # Dynamic solver selection prioritizing modern solvers (CLARABEL -> HIGHS -> ECOS -> OSQP)
         installed = cp.installed_solvers()
         candidate_solvers = []
-        for s in [getattr(cp, "CLARABEL", "CLARABEL"), getattr(cp, "ECOS", "ECOS"), getattr(cp, "HIGHS", "HIGHS"), getattr(cp, "OSQP", "OSQP")]:
+        for s in [getattr(cp, "CLARABEL", "CLARABEL"), getattr(cp, "HIGHS", "HIGHS"), getattr(cp, "ECOS", "ECOS"), getattr(cp, "OSQP", "OSQP")]:
             if s in installed and s not in candidate_solvers:
                 candidate_solvers.append(s)
 
@@ -188,7 +193,9 @@ class MILPScheduler:
         for s in candidate_solvers:
             try:
                 solver_kwargs = {"verbose": False}
-                if s == getattr(cp, "OSQP", "OSQP"):
+                if s == getattr(cp, "CLARABEL", "CLARABEL"):
+                    solver_kwargs.update({"tol_gap_abs": 1e-6, "tol_gap_rel": 1e-6, "tol_feas": 1e-6})
+                elif s == getattr(cp, "OSQP", "OSQP"):
                     solver_kwargs.update({"eps_abs": 1e-5, "eps_rel": 1e-5, "max_iter": 10000})
                 problem.solve(solver=s, **solver_kwargs)
                 if problem.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
