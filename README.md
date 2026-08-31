@@ -44,6 +44,9 @@ flowchart TD
     end
 ```
 
+### Interactive Dashboards
+- [View 01_eda_and_clustering.html Live Preview](https://htmlpreview.github.io/?https://github.com/alecmack00/ev-flex-ml/blob/notebooks/notebooks/01_eda_and_clustering.html)
+
 ---
 
 ## 2. Repository Directory Structure (Still working on this part!)
