@@ -13,6 +13,8 @@ import torch
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from starlette.concurrency import run_in_threadpool
+
 from api.schemas import (
     DispatchRequest,
     DispatchResponse,
@@ -75,7 +77,7 @@ app.add_middleware(
 
 
 @app.get("/health", response_model=HealthCheck, tags=["System"])
-def health_check() -> HealthCheck:
+async def health_check() -> HealthCheck:
     """Returns application health status and current timestamp."""
     return HealthCheck(
         status="ok",
@@ -85,7 +87,7 @@ def health_check() -> HealthCheck:
 
 
 @app.post("/predict/mdn", response_model=List[MDNPredictionResponse], tags=["ML Forecasting"])
-def predict_mdn(request: MDNPredictionRequest) -> List[MDNPredictionResponse]:
+async def predict_mdn(request: MDNPredictionRequest) -> List[MDNPredictionResponse]:
     """Predicts probabilistic distributions (mean and std) for session duration and energy requirement using MDN."""
     if not request.sessions:
         raise HTTPException(
@@ -93,64 +95,66 @@ def predict_mdn(request: MDNPredictionRequest) -> List[MDNPredictionResponse]:
             detail="Session list cannot be empty.",
         )
 
-    model = get_mdn_model()
-    responses: List[MDNPredictionResponse] = []
+    def _infer_mdn():
+        model = get_mdn_model()
+        responses: List[MDNPredictionResponse] = []
 
-    if model is not None:
-        try:
-            session_dicts = [sess.model_dump() for sess in request.sessions]
-            df = pd.DataFrame(session_dicts)
-            preprocessor = SessionPreprocessor()
-            df_features = preprocessor.extract_features(df)
-            X = df_features[preprocessor.feature_cols].values.astype(np.float32)
-            x_tensor = torch.tensor(X, dtype=torch.float32)
+        if model is not None:
+            try:
+                session_dicts = [sess.model_dump() for sess in request.sessions]
+                df = pd.DataFrame(session_dicts)
+                preprocessor = SessionPreprocessor()
+                df_features = preprocessor.extract_features(df)
+                X = df_features[preprocessor.feature_cols].values.astype(np.float32)
+                x_tensor = torch.tensor(X, dtype=torch.float32)
 
-            with torch.no_grad():
-                mean_pred, std_pred = model.predict_distribution(x_tensor)
-                mean_arr = mean_pred.cpu().numpy()
-                std_arr = std_pred.cpu().numpy()
+                with torch.no_grad():
+                    mean_pred, std_pred = model.predict_distribution(x_tensor)
+                    mean_arr = mean_pred.cpu().numpy()
+                    std_arr = std_pred.cpu().numpy()
 
-            for i, sess in enumerate(request.sessions):
-                dur_mean = max(0.5, float(mean_arr[i, 0]))
-                dur_std = max(0.1, float(std_arr[i, 0]))
-                energy_mean = max(0.5, float(mean_arr[i, 1]))
-                energy_std = max(0.1, float(std_arr[i, 1]))
+                for i, sess in enumerate(request.sessions):
+                    dur_mean = max(0.5, float(mean_arr[i, 0]))
+                    dur_std = max(0.1, float(std_arr[i, 0]))
+                    energy_mean = max(0.5, float(mean_arr[i, 1]))
+                    energy_std = max(0.1, float(std_arr[i, 1]))
 
-                responses.append(
-                    MDNPredictionResponse(
-                        session_id=sess.session_id,
-                        expected_duration_hours=round(dur_mean, 2),
-                        std_duration_hours=round(dur_std, 2),
-                        expected_energy_kwh=round(energy_mean, 2),
-                        std_energy_kwh=round(energy_std, 2),
+                    responses.append(
+                        MDNPredictionResponse(
+                            session_id=sess.session_id,
+                            expected_duration_hours=round(dur_mean, 2),
+                            std_duration_hours=round(dur_std, 2),
+                            expected_energy_kwh=round(energy_mean, 2),
+                            std_energy_kwh=round(energy_std, 2),
+                        )
                     )
+                return responses
+            except Exception as e:
+                logger.warning("MDN inference failed: %s. Falling back to heuristics.", e)
+                responses.clear()
+
+        # Heuristic fallback
+        for sess in request.sessions:
+            arr_dt = pd.to_datetime(sess.arrival_time)
+            dep_dt = pd.to_datetime(sess.departure_time)
+            dur_hrs = max(1.0, (dep_dt - arr_dt).total_seconds() / 3600.0)
+
+            responses.append(
+                MDNPredictionResponse(
+                    session_id=sess.session_id,
+                    expected_duration_hours=round(dur_hrs, 2),
+                    std_duration_hours=round(0.15 * dur_hrs, 2),
+                    expected_energy_kwh=round(sess.required_energy_kwh, 2),
+                    std_energy_kwh=round(0.10 * sess.required_energy_kwh, 2),
                 )
-            return responses
-        except Exception as e:
-            logger.warning("MDN inference failed: %s. Falling back to heuristics.", e)
-            responses.clear()
-
-    # Heuristic fallback
-    for sess in request.sessions:
-        arr_dt = pd.to_datetime(sess.arrival_time)
-        dep_dt = pd.to_datetime(sess.departure_time)
-        dur_hrs = max(1.0, (dep_dt - arr_dt).total_seconds() / 3600.0)
-
-        responses.append(
-            MDNPredictionResponse(
-                session_id=sess.session_id,
-                expected_duration_hours=round(dur_hrs, 2),
-                std_duration_hours=round(0.15 * dur_hrs, 2),
-                expected_energy_kwh=round(sess.required_energy_kwh, 2),
-                std_energy_kwh=round(0.10 * sess.required_energy_kwh, 2),
             )
-        )
+        return responses
 
-    return responses
+    return await run_in_threadpool(_infer_mdn)
 
 
 @app.post("/predict/quantile", response_model=QuantilePredictionResponse, tags=["ML Forecasting"])
-def predict_quantile(history_hours: int = 24) -> QuantilePredictionResponse:
+async def predict_quantile(history_hours: int = 24) -> QuantilePredictionResponse:
     """Generates multi-quantile demand forecast (q_0.1, q_0.5, q_0.9) over the next 24 time steps."""
     quantiles = [0.1, 0.5, 0.9]
     t = np.arange(24)
@@ -171,8 +175,8 @@ def predict_quantile(history_hours: int = 24) -> QuantilePredictionResponse:
 
 
 @app.post("/schedule/milp", response_model=DispatchResponse, tags=["Optimization"])
-def schedule_milp(request: DispatchRequest) -> DispatchResponse:
-    """Computes global offline optimal MILP schedule for EV fleet charging."""
+async def schedule_milp(request: DispatchRequest) -> DispatchResponse:
+    """Computes global offline optimal MILP schedule for EV fleet charging asynchronously."""
     if not request.sessions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -213,7 +217,8 @@ def schedule_milp(request: DispatchRequest) -> DispatchResponse:
             "max_charger_power_kw": sess.max_charger_power_kw,
         })
 
-    sol = scheduler.solve(
+    sol = await run_in_threadpool(
+        scheduler.solve,
         sessions=formatted_sessions,
         price_signal=request.price_signals,
         horizon_steps=request.horizon_steps,
@@ -245,8 +250,8 @@ def schedule_milp(request: DispatchRequest) -> DispatchResponse:
 
 
 @app.post("/schedule/mpc", response_model=DispatchResponse, tags=["Optimization"])
-def schedule_mpc(request: DispatchRequest) -> DispatchResponse:
-    """Computes dynamic rolling-horizon MPC dispatch schedule for active EV sessions."""
+async def schedule_mpc(request: DispatchRequest) -> DispatchResponse:
+    """Computes dynamic rolling-horizon MPC dispatch schedule for active EV sessions asynchronously."""
     if not request.sessions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -286,7 +291,8 @@ def schedule_mpc(request: DispatchRequest) -> DispatchResponse:
             "max_charger_power_kw": sess.max_charger_power_kw,
         })
 
-    res = mpc.run_simulation(
+    res = await run_in_threadpool(
+        mpc.run_simulation,
         sessions=formatted_sessions,
         full_price_signal=request.price_signals,
         total_steps=len(request.price_signals),
