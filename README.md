@@ -286,6 +286,22 @@ curl -X POST "http://localhost:8000/schedule/milp" \
 
 ---
 
-## 7. License
+## 7. Assumptions & Limitations
 
-This project is licensed under the terms of the **MIT License**. See the `LICENSE` file for details.
+### 7.1 Assumptions
+- **Local Telemetry & Price Synthesis**: The pipeline relies entirely on mathematically synthesized local telemetry and electricity price data, rather than fetching information from a live remote API network request.
+- **Charger Conversion Efficiency**: The system assumes an AC-to-DC charger conversion efficiency rate of 95% ($\eta_{\text{charge}} = 0.95$).
+- **Feeder Physical Capacity & Headroom**: It operates under the assumption that the feeder transformer has a maximum nameplate capacity of 150.0 kW, and it applies a 0.90 safety margin to enforce an effective grid ceiling of 135.0 kW.
+- **Settlement Time Resolution**: The time-series optimization and evaluations are based on discrete time steps utilizing a 15-minute resolution ($\Delta t = 0.25\text{ hours}$).
+- **Behavioral Fleet Personas**: The behavioral segmentation process assumes the overall EV fleet can be distinctly partitioned into 3 driver personas: Quick Top-Up, Workplace Day Parkers, and Overnight Residential.
+
+### 7.2 Limitations & Technical Constraints
+- **OSQP Solver Tolerance Sensitivities**: The default OSQP solver utilized by the CVXPY optimization module can struggle with tight tolerance checks, which generates inaccurate solution warnings when solving complex formulations over 192-step rolling horizons (mitigated in our pipeline by prioritizing `CLARABEL` and `HIGHS` backends with strict gap tolerances).
+- **Feature Multicollinearity in Raw Clustering**: When passing raw flexibility slack and duration values directly into the $k$-Means clustering algorithm, the mathematical coupling of the two variables introduces collinearity, causing the model to give disproportionate weight to session duration over energy requirements (addressed by clustering on the dimensionless $\text{FlexRatio} = \frac{\text{Slack}}{T_{\text{duration}}}$).
+- **Deep Learning Model Role in Dispatch**: The deep learning session prediction model is currently utilized primarily as a fallback mechanism; the dynamic Model Predictive Control logic only queries the model for inferences if incoming sessions lack explicit driver departure times or energy needs.
+
+---
+
+## 8. License
+
+This project is licensed under the terms of the **MIT License**. See the [LICENSE](LICENSE) file for details.
