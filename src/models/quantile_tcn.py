@@ -13,16 +13,18 @@ def pinball_loss(
     y_pred: torch.Tensor,
     y_true: torch.Tensor,
     quantiles: List[float] = None,
+    monotonicity_penalty: float = 0.05,
 ) -> torch.Tensor:
-    """Computes multi-quantile Pinball Loss (quantile regression loss).
+    """Computes multi-quantile Pinball Loss with composite non-crossing monotonicity regularization.
 
     Args:
         y_pred: Predicted quantiles tensor [batch_size, num_quantiles, horizon].
         y_true: Ground truth target tensor [batch_size, 1, horizon] or [batch_size, horizon].
         quantiles: List of target quantiles (e.g. [0.1, 0.5, 0.9]).
+        monotonicity_penalty: Regularization weight on quantile crossing violations (q_k > q_{k+1}).
 
     Returns:
-        torch.Tensor: Mean pinball loss scalar across batch and quantiles.
+        torch.Tensor: Mean composite pinball loss scalar across batch and quantiles.
     """
     if quantiles is None:
         quantiles = [0.1, 0.5, 0.9]
@@ -37,7 +39,18 @@ def pinball_loss(
         loss_q = torch.maximum(q * error, (q - 1.0) * error)
         total_loss = total_loss + torch.mean(loss_q)
 
-    return total_loss / len(quantiles)
+    base_pinball = total_loss / len(quantiles)
+
+    # Monotonicity penalty across adjacent quantile pairs
+    if monotonicity_penalty > 0.0 and len(quantiles) > 1:
+        crossing_violations = 0.0
+        for k in range(len(quantiles) - 1):
+            # Penalize instances where lower quantile exceeds higher quantile
+            crossing = F.relu(y_pred[:, k, :] - y_pred[:, k + 1, :])
+            crossing_violations = crossing_violations + torch.mean(crossing)
+        return base_pinball + monotonicity_penalty * crossing_violations
+
+    return base_pinball
 
 
 class TemporalBlock(nn.Module):

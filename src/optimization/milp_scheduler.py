@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from src.optimization.constraints import FeederConstraintManager
 from src.utils.logger import setup_logger
 
 logger = setup_logger("milp_scheduler")
@@ -34,6 +35,7 @@ class MILPScheduler:
         dt_hours: float = 0.25,
         slack_penalty: float = 10.0,
         peak_penalty: float = 2.5,
+        battery_degradation_cost_eur_kwh: float = 0.0,
         backend: str = "auto",
     ) -> None:
         """Initializes MILPScheduler.
@@ -44,6 +46,7 @@ class MILPScheduler:
             dt_hours: Time resolution in hours (0.25 for 15 min).
             slack_penalty: Penalty per unmet kWh at departure (€/kWh).
             peak_penalty: Penalty per peak feeder demand kW (€/kW).
+            battery_degradation_cost_eur_kwh: Battery cycling degradation penalty in €/kWh throughput.
             backend: Solver framework ('cvxpy', 'pulp', or 'auto').
         """
         self.feeder_capacity_kw = feeder_capacity_kw
@@ -51,6 +54,7 @@ class MILPScheduler:
         self.dt_hours = dt_hours
         self.slack_penalty = slack_penalty
         self.peak_penalty = peak_penalty
+        self.battery_degradation_cost_eur_kwh = max(0.0, float(battery_degradation_cost_eur_kwh))
 
         if backend == "auto":
             if HAS_CVXPY:
@@ -67,6 +71,8 @@ class MILPScheduler:
         sessions: List[Dict[str, Any]],
         price_signal: Union[List[float], np.ndarray],
         horizon_steps: Optional[int] = None,
+        baseline_load: Optional[Union[List[float], np.ndarray]] = None,
+        ambient_temp_c: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Solves optimal charging schedule for all EV sessions across specified price horizon.
 
@@ -75,6 +81,8 @@ class MILPScheduler:
                       - session_id, arr_step, dep_step, required_energy_kwh, max_charger_power_kw.
             price_signal: 1D array of spot electricity prices in EUR/kWh per step t.
             horizon_steps: Optional total steps T. Inferred from price_signal length if None.
+            baseline_load: Optional 1D array of non-EV background demand (kW) consuming feeder headroom.
+            ambient_temp_c: Optional ambient temperature (°C) for dynamic line/transformer thermal derating.
 
         Returns:
             Dict[str, Any]: Dictionary containing solution status, optimal power matrix (kW), total cost, peak load, and metrics.
@@ -82,6 +90,18 @@ class MILPScheduler:
         prices = np.array(price_signal, dtype=np.float64)
         T = len(prices) if horizon_steps is None else horizon_steps
         prices = prices[:T]
+
+        eff_feeder_cap = self.feeder_capacity_kw
+        if ambient_temp_c is not None:
+            eff_feeder_cap = FeederConstraintManager.compute_dynamic_transformer_rating(
+                self.feeder_capacity_kw, ambient_temp_c
+            )
+
+        base_load_arr = None
+        if baseline_load is not None:
+            base_load_arr = np.asarray(baseline_load, dtype=np.float64)[:T]
+            if len(base_load_arr) < T:
+                base_load_arr = np.pad(base_load_arr, (0, T - len(base_load_arr)), mode="edge")
 
         N = len(sessions)
         if N == 0:
@@ -91,14 +111,15 @@ class MILPScheduler:
                 "total_cost_eur": 0.0,
                 "peak_load_kw": 0.0,
                 "total_unmet_kwh": 0.0,
+                "feeder_capacity_kw": eff_feeder_cap,
             }
 
         logger.debug(f"Solving MILP schedule for {N} sessions over {T} time steps using backend='{self.backend}'.")
 
         if self.backend == "cvxpy" and HAS_CVXPY:
-            return self._solve_cvxpy(sessions, prices, N, T)
+            return self._solve_cvxpy(sessions, prices, N, T, eff_feeder_cap, base_load_arr)
         elif HAS_PULP:
-            return self._solve_pulp(sessions, prices, N, T)
+            return self._solve_pulp(sessions, prices, N, T, eff_feeder_cap, base_load_arr)
         else:
             raise RuntimeError(f"Requested optimization backend '{self.backend}' is unavailable.")
 
@@ -108,6 +129,8 @@ class MILPScheduler:
         prices: np.ndarray,
         N: int,
         T: int,
+        feeder_cap: float,
+        baseline_load: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         """CVXPY solver implementation."""
         P = cp.Variable((N, T), nonneg=True, name="Power")
@@ -116,11 +139,12 @@ class MILPScheduler:
 
         constraints = []
 
-        # 1. Feeder Capacity Limit & Peak load tracking for each step t
+        # 1. Feeder Capacity Limit & Peak load tracking for each step t (incorporating non-EV baseline)
         for t in range(T):
+            base_t = float(baseline_load[t]) if baseline_load is not None else 0.0
             total_t = cp.sum(P[:, t])
-            constraints.append(total_t <= self.feeder_capacity_kw)
-            constraints.append(total_t <= peak)
+            constraints.append(total_t + base_t <= feeder_cap)
+            constraints.append(total_t + base_t <= peak)
 
         # 2. Session arrival, departure, charger max power, and energy satisfaction
         for i, sess in enumerate(sessions):
@@ -144,25 +168,29 @@ class MILPScheduler:
             constraints.append(delivered_energy + slack[i] >= req_energy)
 
         # Objective Function
-        # Energy cost + Slack penalty + Peak demand charge
-        energy_cost = cp.sum(cp.matmul(P, prices) * self.dt_hours)
+        # Energy cost + Degradation cost + Slack penalty + Peak demand charge
+        effective_unit_cost = prices + self.battery_degradation_cost_eur_kwh
+        energy_cost = cp.sum(cp.matmul(P, effective_unit_cost) * self.dt_hours)
         total_slack_cost = self.slack_penalty * cp.sum(slack)
         peak_cost = self.peak_penalty * peak
 
         objective = cp.Minimize(energy_cost + total_slack_cost + peak_cost)
         problem = cp.Problem(objective, constraints)
 
-        # Dynamic solver selection prioritizing modern solvers (CLARABEL -> HIGHS -> ECOS -> OSQP)
+        # Dynamic solver selection prioritizing modern solvers (CLARABEL -> ECOS -> HIGHS -> OSQP)
         installed = cp.installed_solvers()
         candidate_solvers = []
-        for s in [getattr(cp, "CLARABEL", "CLARABEL"), getattr(cp, "HIGHS", "HIGHS"), cp.ECOS, cp.OSQP]:
+        for s in [getattr(cp, "CLARABEL", "CLARABEL"), getattr(cp, "ECOS", "ECOS"), getattr(cp, "HIGHS", "HIGHS"), getattr(cp, "OSQP", "OSQP")]:
             if s in installed and s not in candidate_solvers:
                 candidate_solvers.append(s)
 
         solved = False
         for s in candidate_solvers:
             try:
-                problem.solve(solver=s, verbose=False)
+                solver_kwargs = {"verbose": False}
+                if s == getattr(cp, "OSQP", "OSQP"):
+                    solver_kwargs.update({"eps_abs": 1e-5, "eps_rel": 1e-5, "max_iter": 10000})
+                problem.solve(solver=s, **solver_kwargs)
                 if problem.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
                     solved = True
                     break
@@ -189,8 +217,8 @@ class MILPScheduler:
             "total_cost_eur": round(total_cost, 4),
             "peak_load_kw": round(peak_val, 2),
             "total_unmet_kwh": round(unmet_val, 4),
-            "feeder_capacity_kw": self.feeder_capacity_kw,
-        }   
+            "feeder_capacity_kw": feeder_cap,
+        }
 
     def _solve_pulp(
         self,
@@ -198,6 +226,8 @@ class MILPScheduler:
         prices: np.ndarray,
         N: int,
         T: int,
+        feeder_cap: float,
+        baseline_load: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         """PuLP solver fallback implementation."""
         prob = pulp.LpProblem("EV_Fleet_Charging_Optimization", pulp.LpMinimize)
@@ -220,8 +250,10 @@ class MILPScheduler:
         peak_var = pulp.LpVariable("PeakLoad", lowBound=0.0)
 
         # Objective Function
+        # Energy cost + Degradation cost + Slack penalty + Peak demand charge
+        effective_unit_cost = prices + self.battery_degradation_cost_eur_kwh
         energy_cost_expr = pulp.lpSum([
-            P_vars[(i, t)] * prices[t] * self.dt_hours
+            P_vars[(i, t)] * effective_unit_cost[t] * self.dt_hours
             for i in range(N) for t in range(T)
         ])
         slack_cost_expr = self.slack_penalty * pulp.lpSum(slack_vars)
@@ -229,10 +261,11 @@ class MILPScheduler:
 
         prob += energy_cost_expr + slack_cost_expr + peak_cost_expr
 
-        # Constraints
+        # Constraints (incorporating non-EV baseline load)
         for t in range(T):
-            step_load = pulp.lpSum([P_vars[(i, t)] for i in range(N)])
-            prob += (step_load <= self.feeder_capacity_kw, f"FeederCap_{t}")
+            base_t = float(baseline_load[t]) if baseline_load is not None else 0.0
+            step_load = pulp.lpSum([P_vars[(i, t)] for i in range(N)]) + base_t
+            prob += (step_load <= feeder_cap, f"FeederCap_{t}")
             prob += (step_load <= peak_var, f"PeakLoad_{t}")
 
         for i, sess in enumerate(sessions):
@@ -265,5 +298,5 @@ class MILPScheduler:
             "total_cost_eur": round(total_cost, 4),
             "peak_load_kw": round(peak_val, 2),
             "total_unmet_kwh": round(unmet_val, 4),
-            "feeder_capacity_kw": self.feeder_capacity_kw,
+            "feeder_capacity_kw": feeder_cap,
         }

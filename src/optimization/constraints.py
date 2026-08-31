@@ -20,6 +20,7 @@ class FeederConstraintManager:
         safety_margin: float = 0.90,
         charging_efficiency: float = 0.95,
         default_max_charger_kw: float = 11.0,
+        ambient_temp_c: Optional[float] = None,
     ) -> None:
         """Initializes FeederConstraintManager.
 
@@ -28,12 +29,46 @@ class FeederConstraintManager:
             safety_margin: Feeder operational safety margin multiplier (e.g. 0.90 for 10% headroom).
             charging_efficiency: Charger AC-to-DC conversion efficiency (eta).
             default_max_charger_kw: Default max power draw per charger point in kW.
+            ambient_temp_c: Optional ambient temperature (°C) for dynamic line/transformer thermal derating.
         """
-        self.feeder_capacity_kw = feeder_capacity_kw
+        if ambient_temp_c is not None:
+            self.feeder_capacity_kw = self.compute_dynamic_transformer_rating(
+                feeder_capacity_kw, ambient_temp_c
+            )
+        else:
+            self.feeder_capacity_kw = feeder_capacity_kw
+
         self.safety_margin = safety_margin
-        self.effective_feeder_limit_kw = feeder_capacity_kw * safety_margin
+        self.effective_feeder_limit_kw = self.feeder_capacity_kw * safety_margin
         self.charging_efficiency = charging_efficiency
         self.default_max_charger_kw = default_max_charger_kw
+
+    @staticmethod
+    def compute_dynamic_transformer_rating(
+        nominal_capacity_kw: float,
+        ambient_temp_c: float,
+        theta_max_c: float = 110.0,
+        ambient_rated_c: float = 25.0,
+    ) -> float:
+        """Computes ambient-temperature-derated dynamic transformer capacity (IEEE C57.91).
+
+        P_dynamic = P_nominal * sqrt((theta_max - theta_ambient) / (theta_max - theta_ambient_rated))
+
+        Args:
+            nominal_capacity_kw: Nameplate rated capacity in kW at ambient_rated_c.
+            ambient_temp_c: Current ambient temperature in °C.
+            theta_max_c: Maximum allowable hot-spot winding temperature in °C (default: 110°C).
+            ambient_rated_c: Nameplate reference ambient temperature in °C (default: 25°C).
+
+        Returns:
+            float: Derated/uprated transformer capacity limit in kW.
+        """
+        temp_headroom = max(0.0, theta_max_c - ambient_temp_c)
+        rated_headroom = max(1.0, theta_max_c - ambient_rated_c)
+        derating_factor = np.sqrt(temp_headroom / rated_headroom)
+        # Cap derating between 0.5x and 1.35x of nominal nameplate
+        derating_factor = float(np.clip(derating_factor, 0.50, 1.35))
+        return round(nominal_capacity_kw * derating_factor, 2)
 
     def compute_soc_step(
         self,
@@ -65,6 +100,7 @@ class FeederConstraintManager:
         power_schedule_matrix: np.ndarray,
         sessions: List[Dict[str, Any]],
         dt_hours: float = 0.25,
+        baseline_load_kw: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         """Validates that a proposed power schedule satisfies feeder and battery physical limits.
 
@@ -72,6 +108,7 @@ class FeederConstraintManager:
             power_schedule_matrix: 2D numpy array [num_sessions, num_time_steps] of charging powers (kW).
             sessions: List of session specification dicts.
             dt_hours: Time step duration in hours.
+            baseline_load_kw: Optional 1D numpy array of exogenous non-EV background demand (kW).
 
         Returns:
             Dict[str, Any]: Validation report with boolean status and detailed violations.
@@ -80,7 +117,13 @@ class FeederConstraintManager:
         violations = []
 
         # 1. Check feeder transformer capacity limits per time step
-        total_feeder_power = np.sum(power_schedule_matrix, axis=0)
+        ev_feeder_power = np.sum(power_schedule_matrix, axis=0)
+        if baseline_load_kw is not None:
+            base_arr = np.asarray(baseline_load_kw, dtype=np.float64)[:num_steps]
+            total_feeder_power = ev_feeder_power + base_arr
+        else:
+            total_feeder_power = ev_feeder_power
+
         max_feeder_load = np.max(total_feeder_power)
 
         feeder_overloads = np.where(total_feeder_power > self.effective_feeder_limit_kw + 1e-3)[0]

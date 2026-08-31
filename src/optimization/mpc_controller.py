@@ -23,6 +23,8 @@ class MPCController:
         horizon_steps: int = 96,  # 24 hours at 15-minute resolution
         dt_hours: float = 0.25,
         charging_efficiency: float = 0.95,
+        battery_degradation_cost_eur_kwh: float = 0.0,
+        ambient_temp_c: Optional[float] = None,
         ml_model: Optional[Any] = None,
     ) -> None:
         """Initializes MPCController.
@@ -32,22 +34,28 @@ class MPCController:
             horizon_steps: MPC lookahead horizon H (number of time steps).
             dt_hours: Time resolution in hours (0.25 for 15 min).
             charging_efficiency: Charger conversion efficiency.
+            battery_degradation_cost_eur_kwh: Battery cycling degradation penalty in €/kWh throughput.
+            ambient_temp_c: Optional ambient temperature (°C) for dynamic line/transformer thermal derating.
             ml_model: Optional probabilistic forecasting model (MDN or TCN).
         """
         self.feeder_capacity_kw = feeder_capacity_kw
         self.horizon_steps = horizon_steps
         self.dt_hours = dt_hours
         self.charging_efficiency = charging_efficiency
+        self.battery_degradation_cost_eur_kwh = max(0.0, float(battery_degradation_cost_eur_kwh))
+        self.ambient_temp_c = ambient_temp_c
         self.ml_model = ml_model
 
         self.scheduler = MILPScheduler(
             feeder_capacity_kw=feeder_capacity_kw,
             charging_efficiency=charging_efficiency,
             dt_hours=dt_hours,
+            battery_degradation_cost_eur_kwh=self.battery_degradation_cost_eur_kwh,
         )
         self.constraint_mgr = FeederConstraintManager(
             feeder_capacity_kw=feeder_capacity_kw,
             charging_efficiency=charging_efficiency,
+            ambient_temp_c=ambient_temp_c,
         )
 
     def predict_session_params(
@@ -118,6 +126,8 @@ class MPCController:
         sessions: List[Dict[str, Any]],
         full_price_signal: Union[List[float], np.ndarray],
         total_steps: int,
+        baseline_load: Optional[Union[List[float], np.ndarray]] = None,
+        ambient_temp_c: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Executes full rolling-horizon MPC simulation over total_steps time series.
 
@@ -125,12 +135,20 @@ class MPCController:
             sessions: List of EV charging session specification dicts.
             full_price_signal: Array of prices for all steps t in [0, total_steps + horizon_steps].
             total_steps: Number of simulation steps to run.
+            baseline_load: Optional array of non-EV background demand (kW) consuming feeder headroom.
+            ambient_temp_c: Optional ambient temperature (°C) for dynamic line/transformer thermal derating.
 
         Returns:
             Dict[str, Any]: Simulation trace containing dispatch matrix, battery SoC trajectories, and costs.
         """
         prices = np.array(full_price_signal, dtype=np.float64)
         N = len(sessions)
+
+        eff_ambient = ambient_temp_c if ambient_temp_c is not None else self.ambient_temp_c
+
+        base_load_arr = None
+        if baseline_load is not None:
+            base_load_arr = np.asarray(baseline_load, dtype=np.float64)
 
         # Output dispatch matrix [N, total_steps]
         dispatch_matrix = np.zeros((N, total_steps), dtype=np.float64)
@@ -150,6 +168,14 @@ class MPCController:
                 # Pad price window if near end of simulation
                 pad_val = p_window[-1] if len(p_window) > 0 else 0.2
                 p_window = np.pad(p_window, (0, self.horizon_steps - len(p_window)), mode="edge")
+
+            # Slice baseline load window [k, k + H]
+            base_window = None
+            if base_load_arr is not None:
+                base_window = base_load_arr[k : k + self.horizon_steps]
+                if len(base_window) < self.horizon_steps:
+                    pad_base = base_window[-1] if len(base_window) > 0 else 0.0
+                    base_window = np.pad(base_window, (0, self.horizon_steps - len(base_window)), constant_values=pad_base)
 
             # Active sessions at time step k
             local_sessions = []
@@ -183,6 +209,8 @@ class MPCController:
                     local_sessions,
                     p_window,
                     horizon_steps=self.horizon_steps,
+                    baseline_load=base_window,
+                    ambient_temp_c=eff_ambient,
                 )
                 pow_mat = sol["power_matrix"]
 
