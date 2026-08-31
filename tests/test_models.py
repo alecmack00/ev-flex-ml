@@ -25,18 +25,23 @@ def test_mdn_forward_and_loss():
     x = torch.randn(batch_size, input_dim)
     y = torch.randn(batch_size, output_dim)
 
-    pi, mu, sigma = model(x)
+    outputs = model(x)
+    pi, mu, sigma = outputs[0], outputs[1], outputs[2]
+    rho = outputs[3] if len(outputs) > 3 else None
 
     assert pi.shape == (batch_size, num_mixtures)
     assert mu.shape == (batch_size, num_mixtures, output_dim)
     assert sigma.shape == (batch_size, num_mixtures, output_dim)
+    if rho is not None:
+        assert rho.shape == (batch_size, num_mixtures)
+        assert (rho >= -1.0).all() and (rho <= 1.0).all()
 
     # Check softmax sum to 1
     assert torch.allclose(pi.sum(dim=-1), torch.ones(batch_size), atol=1e-4)
     # Check strict positivity of sigma
     assert (sigma > 0).all()
 
-    loss = mdn_loss_function(pi, mu, sigma, y)
+    loss = mdn_loss_function(pi, mu, sigma, y, rho=rho)
     assert not torch.isnan(loss)
     assert loss.dim() == 0  # Scalar loss
 
