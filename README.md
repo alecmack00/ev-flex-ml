@@ -288,4 +288,4 @@ curl -X POST "http://localhost:8000/schedule/milp" \
 
 ## 7. License
 
-This project is licensed under the terms of the **MIT License**. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the terms of the **MIT License**. See the `LICENSE` file for details.

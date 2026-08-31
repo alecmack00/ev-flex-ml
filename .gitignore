@@ -47,3 +47,4 @@ htmlcov/
 *.log
 .env
 .DS_Store
+scratch/
